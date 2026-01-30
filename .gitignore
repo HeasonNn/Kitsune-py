@@ -1,0 +1,10 @@
+__pycache__
+
+venv
+data
+raw_data
+build
+output
+
+*.pcap
+*.npy
