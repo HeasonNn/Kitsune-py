@@ -1,4 +1,31 @@
+# Update
+## New Files
+- FeatureExtractor2.py
+- netStat2.py
+- kitsune_offline.py
+- batch_extract.py
+- batch_run.py
+
+## Usage
+### Run Single Task
+```bash
+python FeatureExtractor2.py --data xxx/xxx.data --label xxx/xxx/xxx.label
+
+python kitsune_offline.py --data xxx/xxx/xxx.npy 
+```
+### Run All Tasks
+```bash
+python batch_extract.py
+
+python batch_run.py
+```
+
+---
+
 # Overview
+
+> The following content is from the original repository and has expired.
+
 In this repository you will find a Python implementation of Kitsune; an online network intrusion detection system, based on an ensemble of autoencoders. From,
 
 *Yisroel Mirsky, Tomer Doitshman, Yuval Elovici, and Asaf Shabtai, "Kitsune: An Ensemble of Autoencoders for Online Network Intrusion Detection", Network and Distributed System Security Symposium 2018 (NDSS'18)*

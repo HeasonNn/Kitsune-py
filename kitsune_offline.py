@@ -6,6 +6,7 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+from pathlib import Path
 
 from KitNET.corClust import corClust
 from dataclasses import dataclass
@@ -63,7 +64,7 @@ def score_execution_phase(
     device: str,
     batch_size: int,
 ) -> np.ndarray:
-    print("Scoring execution phase...")
+    # print("Scoring execution phase...")
     scores: List[torch.Tensor] = []
     for xb_raw in iter_array_batches(X_ex, batch_size):
         xb_cpu = np.asarray(xb_raw, dtype=np.float32)
@@ -186,9 +187,7 @@ def train_ae(
             opt.step()
             tot += loss.item() * xb.size(0)
             cnt += xb.size(0)
-        print(f"  epoch {ep+1}/{epochs} loss={tot/cnt:.6e}")
-
-
+        # print(f"  epoch {ep+1}/{epochs} loss={tot/cnt:.6e}")
 
 
 def learn_feature_map(X_fm: np.ndarray, d: int, maxAE: int, FMgrace: int) -> List[List[int]]:
@@ -216,14 +215,14 @@ def train_ensemble_and_output(
     ensemble: List[Tuple[List[int], AE]] = []
     X_ad_t = torch.from_numpy(X_ad_norm)  # CPU tensor
 
-    print("Training ensemble AEs...")
+    # print("Training ensemble AEs...")
     for gi, idxs in enumerate(groups):
         ae = AE(len(idxs), beta=beta).to(device)
         data = X_ad_t[:, idxs]
         train_ae(ae, data, device=device, batch_size=batch_size, epochs=epochs_ens)
         ensemble.append((idxs, ae))
 
-    print("Building error vectors for output AE training...")
+    # print("Building error vectors for output AE training...")
     errs = []
     for xb_cpu in iter_array_batches(X_ad_norm, batch_size):
         xb_cpu_t = torch.from_numpy(np.asarray(xb_cpu, dtype=np.float32))
@@ -239,7 +238,7 @@ def train_ensemble_and_output(
     E_ad_norm = normalize_np(E_ad_np, e_min, e_max).astype(np.float32, copy=False)
     E_ad_t = torch.from_numpy(E_ad_norm)
 
-    print("Training output AE...")
+    # print("Training output AE...")
     out_ae = AE(E_ad_t.shape[1], beta=beta).to(device)
     train_ae(out_ae, E_ad_t, device=device, batch_size=batch_size, epochs=epochs_out)
 
@@ -255,7 +254,7 @@ def save_outputs(
     save: bool,
 ) -> None:
     np.save(out_path, scores)
-    print("Saved", out_path + ":", str(scores.shape))
+    # print("Saved", out_path + ":", str(scores.shape))
     if save:
         full = np.full((N_total,), np.nan, dtype=np.float32)
         start = FMgrace + ADgrace
@@ -297,11 +296,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     X, y = load_features_and_labels(args.data, args.label, args.n_rows)
     N, d = X.shape
-    print("X:", (N, d), "dtype:", X.dtype, "device:", device, "labels:", (None if y is None else y.shape))
+    # print("X:", (N, d), "dtype:", X.dtype, "device:", device, "labels:", (None if y is None else y.shape))
 
     split = split_data(X, y, args.FMgrace, args.ADgrace)
     groups = learn_feature_map(split.X_fm, d=d, maxAE=args.maxAE, FMgrace=args.FMgrace)
-    print("num groups:", len(groups), "group sizes:", [len(g) for g in groups][:10], "...")
+    # print("num groups:", len(groups), "group sizes:", [len(g) for g in groups][:10], "...")
 
     ensemble, out_ae, norms = train_ensemble_and_output(
         split.X_ad,
@@ -334,23 +333,34 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     auc = roc_auc_score(y_eval, s_eval)
     ap = average_precision_score(y_eval, s_eval)
 
-    precision, recall, thresholds = precision_recall_curve(y_eval, s_eval)
+    invert = bool(auc < 0.5)
+    s_dir = (-s_eval) if invert else s_eval
+    auc_dir = roc_auc_score(y_eval, s_dir)
+    ap_dir = average_precision_score(y_eval, s_dir)
+
+    precision, recall, thresholds = precision_recall_curve(y_eval, s_dir)
     p = precision[:-1]
     r = recall[:-1]
     denom = p + r
-    f1 = np.where(denom == 0, 0.0, 2.0 * p * r / denom)
+    num = 2.0 * p * r
+    f1 = np.zeros_like(num)
+    np.divide(num, denom, out=f1, where=(denom != 0))
     best_idx = int(np.argmax(f1)) if f1.size > 0 else 0
     thr = float(thresholds[best_idx]) if thresholds.size > 0 else float("inf")
 
-    y_pred = (s_eval >= thr).astype(np.uint8)
+    y_pred = (s_dir >= thr).astype(np.uint8)
     p2, r2, f12, _ = precision_recall_fscore_support(y_eval, y_pred, average="binary", zero_division=0)
 
-    print("roc_auc=", float(auc))
-    print("average_precision=", float(ap))
-    print("best_f1_threshold=", thr)
-    print("best_f1=", float(f12))
-    print("precision=", float(p2))
-    print("recall=", float(r2))
+    pos = int(np.sum(y_eval == 1))
+    neg = int(y_eval.size - pos)
+    rate = pos / y_eval.size if y_eval.size else 0.0
+    ds = Path(args.data).stem
+
+    def fmt6(x: float) -> str:
+        return f"{float(x):.6f}"
+
+    print(f"samples: {y_eval.size}  positives: {pos}  negatives: {neg}  pos_rate: {rate:.6%}")
+    print(f"dataset={ds} | metrics | auc={fmt6(auc_dir)} ap={fmt6(ap_dir)} p={fmt6(p2)} r={fmt6(r2)} f1={fmt6(f12)}\n")
 
 
 if __name__ == "__main__":
