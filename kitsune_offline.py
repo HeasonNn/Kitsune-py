@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 
+from kitsune_tracker import LocalTracker
 from KitNET.corClust import corClust
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -291,6 +292,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
+    tracker = LocalTracker(project_name="kitsune", base_dir="runs", index_name="results_index.csv")
+    ctx = tracker.start(args, dataset_stem=Path(args.data).stem)
+    tracker.save_args(args)
+    run_tag = ctx.run_tag
+    
     device = args.device
     torch.set_float32_matmul_precision("high")
 
@@ -321,7 +327,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         batch_size=args.batch_size,
     )
 
-    save_outputs(scores, args.out, N_total=N, FMgrace=args.FMgrace, ADgrace=args.ADgrace, save=args.save)
+    # Save scores into this run directory by default (keep absolute --out as-is)
+    out_path = args.out
+    if not os.path.isabs(out_path):
+        out_path = str(ctx.paths.file(out_path))
+
+    save_outputs(scores, out_path, N_total=N, FMgrace=args.FMgrace, ADgrace=args.ADgrace, save=args.save)
 
     if split.y_ex is None:
         raise ValueError("Metrics require labels (provide --label or ensure <data>.label.npy exists)")
@@ -361,6 +372,44 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     print(f"samples: {y_eval.size}  positives: {pos}  negatives: {neg}  pos_rate: {rate:.6%}")
     print(f"dataset={ds} | metrics | auc={fmt6(auc_dir)} ap={fmt6(ap_dir)} p={fmt6(p2)} r={fmt6(r2)} f1={fmt6(f12)}\n")
+
+    # ---- Tracker artifacts (summary.json + global index + arrays) ----
+    summary = {
+        "project": "kitsune",
+        "dataset": ds,
+        "run_tag": ctx.run_tag,
+        "run_dir": str(ctx.paths.run_dir),
+        # args
+        "data": str(args.data),
+        "label": (None if args.label is None else str(args.label)),
+        "n_rows": (None if args.n_rows is None else int(args.n_rows)),
+        "maxAE": int(args.maxAE),
+        "FMgrace": int(args.FMgrace),
+        "ADgrace": int(args.ADgrace),
+        "beta": float(args.beta),
+        "batch_size": int(args.batch_size),
+        "epochs_ens": int(args.epochs_ens),
+        "epochs_out": int(args.epochs_out),
+        "seed": int(args.seed),
+        "device": str(args.device),
+        # metrics
+        "invert": bool(invert),
+        "best_f1_threshold": float(thr),
+        "auc": float(auc_dir),
+        "ap": float(ap_dir),
+        "precision": float(p2),
+        "recall": float(r2),
+        "f1": float(f12),
+        "samples": int(y_eval.size),
+        "positives": int(pos),
+        "negatives": int(neg),
+        "pos_rate": float(rate),
+        # output
+        "scores_path": str(out_path),
+    }
+
+    tracker.finish(summary)
+    tracker.save_arrays(scores=scores, y_eval=y_eval, s_eval=s_dir)
 
 
 if __name__ == "__main__":
